@@ -19,6 +19,7 @@ from croom.display.cec import (
     CECDevice,
     CECPowerStatus,
 )
+from croom.core.service import Service
 
 logger = logging.getLogger(__name__)
 
@@ -392,7 +393,7 @@ class DisplayInfo:
     model: str = ""
 
 
-class DisplayService:
+class DisplayService(Service):
     """
     High-level display service for Croom.
 
@@ -416,6 +417,7 @@ class DisplayService:
                 - power_off_timeout: Seconds of inactivity before power off
                 - wake_on_motion: Wake display on motion detection
         """
+        super().__init__("display")
         self.config = config or {}
 
         # CEC controller (for Raspberry Pi / TVs)

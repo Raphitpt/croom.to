@@ -43,12 +43,29 @@ class Service(ABC):
         self._start_time: Optional[float] = None
 
     @property
+    def service_state(self) -> ServiceState:
+        """Lifecycle state, used by ServiceManager.
+
+        Subclasses may redefine ``state`` for their own domain (display power,
+        dashboard connection...), so the manager never relies on it.
+        """
+        return self._state
+
+    @property
     def state(self) -> ServiceState:
         return self._state
 
     @property
     def is_running(self) -> bool:
         return self._state == ServiceState.RUNNING
+
+    async def initialize(self) -> bool:
+        """Prepare the service (open devices, load models...).
+
+        Called by ServiceManager before start(). Returns False if the
+        service cannot run on this machine.
+        """
+        return True
 
     @abstractmethod
     async def start(self) -> None:
@@ -101,21 +118,30 @@ class ServiceManager:
     def __init__(self):
         self._services: Dict[str, Service] = {}
         self._start_order: List[str] = []
+        self._required: Dict[str, bool] = {}
         self._running = False
         self._shutdown_event = asyncio.Event()
 
-    def register(self, service: Service, dependencies: Optional[List[str]] = None) -> None:
+    def register(
+        self,
+        service: Service,
+        dependencies: Optional[List[str]] = None,
+        required: bool = True,
+    ) -> None:
         """
         Register a service with the manager.
 
         Args:
             service: Service instance to register.
             dependencies: List of service names this service depends on.
+            required: If False, a failure to initialize or start this service
+                is logged and the other services keep running.
         """
         if service.name in self._services:
             raise ValueError(f"Service '{service.name}' already registered")
 
         self._services[service.name] = service
+        self._required[service.name] = required
 
         # Update start order based on dependencies
         if dependencies:
@@ -139,6 +165,7 @@ class ServiceManager:
         """Unregister a service."""
         if name in self._services:
             del self._services[name]
+            self._required.pop(name, None)
             if name in self._start_order:
                 self._start_order.remove(name)
             logger.info(f"Unregistered service: {name}")
@@ -170,12 +197,17 @@ class ServiceManager:
             try:
                 logger.info(f"Starting service: {name}")
                 service._set_state(ServiceState.STARTING)
+                if not await service.initialize():
+                    raise RuntimeError("initialization failed")
                 await service.start()
                 service._set_state(ServiceState.RUNNING)
                 logger.info(f"Service started: {name}")
             except Exception as e:
-                logger.error(f"Failed to start service '{name}': {e}")
                 service._set_state(ServiceState.ERROR, str(e))
+                if not self._required.get(name, True):
+                    logger.warning(f"Optional service '{name}' unavailable: {e}")
+                    continue
+                logger.error(f"Failed to start service '{name}': {e}")
                 # Stop already started services
                 await self.stop_all()
                 return False
@@ -192,7 +224,7 @@ class ServiceManager:
         # Stop in reverse order
         for name in reversed(self._start_order):
             service = self._services.get(name)
-            if not service or service.state == ServiceState.STOPPED:
+            if not service or service.service_state == ServiceState.STOPPED:
                 continue
 
             try:

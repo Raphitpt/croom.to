@@ -260,7 +260,7 @@ class AIService(Service):
             "supported_models": [m.value for m in caps.supported_models],
         }
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_details(self) -> Dict[str, Any]:
         """Get AI service status."""
         return {
             "running": self.is_running,

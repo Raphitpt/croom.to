@@ -217,7 +217,7 @@ class MeetingService(Service):
         """Get list of available platforms."""
         return list(self._providers.keys())
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_details(self) -> Dict[str, Any]:
         """Get meeting service status."""
         return {
             "running": self.is_running,

@@ -8,10 +8,12 @@ import asyncio
 import logging
 import signal
 import sys
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from croom.core.config import Config, load_config
 from croom.core.service import ServiceManager, Service, ServiceState
+from croom.core import service_options
 from croom.platform.detector import PlatformDetector, PlatformInfo
 from croom.platform.capabilities import CapabilityDetector, Capabilities
 
@@ -44,6 +46,7 @@ class CroomAgent:
 
         self._running = False
         self._main_task: Optional[asyncio.Task] = None
+        self._meeting_tasks: set = set()
 
         logger.info(f"Croom Agent initialized on {self.platform_info.device.value}")
         logger.info(f"AI accelerators: {self.platform_info.ai_accelerators}")
@@ -64,16 +67,23 @@ class CroomAgent:
         await self.stop()
 
     def _initialize_services(self) -> None:
-        """Initialize and register all services based on configuration."""
-        # Import services dynamically to avoid circular imports
+        """Initialize and register all services based on configuration.
+
+        Only the meeting service is required: a room without a working camera
+        control, TV link or dashboard must still be able to join meetings.
+        """
+        # Import services lazily to avoid circular imports
         # and allow optional dependencies
+        ai_deps = None
 
         # AI Service (if enabled)
         if self.config.ai.enabled and not self.config.ai.privacy_mode:
             try:
                 from croom.ai.service import AIService
-                ai_service = AIService(self.config, self.capabilities)
-                self.service_manager.register(ai_service)
+                self.service_manager.register(
+                    AIService(self.config, self.capabilities), required=False
+                )
+                ai_deps = ["ai"]
                 logger.info("AI service registered")
             except ImportError as e:
                 logger.warning(f"AI service not available: {e}")
@@ -81,8 +91,11 @@ class CroomAgent:
         # Audio Service
         try:
             from croom.audio.service import AudioService
-            audio_service = AudioService(self.config)
-            self.service_manager.register(audio_service, dependencies=["ai"] if self.config.ai.enabled else None)
+            self.service_manager.register(
+                AudioService(service_options.audio_options(self.config)),
+                dependencies=ai_deps,
+                required=False,
+            )
             logger.info("Audio service registered")
         except ImportError as e:
             logger.warning(f"Audio service not available: {e}")
@@ -90,8 +103,11 @@ class CroomAgent:
         # Video Service
         try:
             from croom.video.service import VideoService
-            video_service = VideoService(self.config, self.capabilities)
-            self.service_manager.register(video_service, dependencies=["ai"] if self.config.ai.enabled else None)
+            self.service_manager.register(
+                VideoService(service_options.video_options(self.config)),
+                dependencies=ai_deps,
+                required=False,
+            )
             logger.info("Video service registered")
         except ImportError as e:
             logger.warning(f"Video service not available: {e}")
@@ -99,39 +115,81 @@ class CroomAgent:
         # Display Service
         try:
             from croom.display.service import DisplayService
-            display_service = DisplayService(self.config, self.capabilities)
-            self.service_manager.register(display_service)
+            self.service_manager.register(
+                DisplayService(service_options.display_options(self.config)),
+                required=False,
+            )
             logger.info("Display service registered")
         except ImportError as e:
             logger.warning(f"Display service not available: {e}")
 
         # Meeting Service
-        try:
-            from croom.meeting.service import MeetingService
-            meeting_service = MeetingService(self.config)
-            self.service_manager.register(meeting_service, dependencies=["audio", "video"])
-            logger.info("Meeting service registered")
-        except ImportError as e:
-            logger.warning(f"Meeting service not available: {e}")
+        from croom.meeting.service import MeetingService
+        meeting_service = MeetingService(self.config)
+        self.service_manager.register(
+            meeting_service,
+            dependencies=[n for n in ("audio", "video") if self.service_manager.get_service(n)],
+        )
+        logger.info("Meeting service registered")
 
         # Calendar Service
-        try:
-            from croom.calendar.service import CalendarService
-            calendar_service = CalendarService(self.config)
-            self.service_manager.register(calendar_service)
-            logger.info("Calendar service registered")
-        except ImportError as e:
-            logger.warning(f"Calendar service not available: {e}")
+        calendar_options = service_options.calendar_options(self.config)
+        if calendar_options is None:
+            logger.info("Calendar not configured, auto-join disabled")
+        else:
+            try:
+                from croom.calendar.service import CalendarService
+                calendar_service = CalendarService(calendar_options)
+                if self.config.calendar.auto_join:
+                    calendar_service.on_meeting_starting(self._on_calendar_meeting)
+                self.service_manager.register(calendar_service, required=False)
+                logger.info("Calendar service registered")
+            except ImportError as e:
+                logger.warning(f"Calendar service not available: {e}")
 
         # Dashboard Connection Service
         if self.config.dashboard.enabled and self.config.dashboard.url:
             try:
                 from croom.dashboard.client import DashboardClient
-                dashboard_client = DashboardClient(self.config, self.capabilities)
-                self.service_manager.register(dashboard_client)
+                self.service_manager.register(
+                    DashboardClient(service_options.dashboard_options(self.config)),
+                    required=False,
+                )
                 logger.info("Dashboard client registered")
             except ImportError as e:
                 logger.warning(f"Dashboard client not available: {e}")
+
+    def _on_calendar_meeting(self, event) -> None:
+        """Calendar callback: a meeting with a video link is starting."""
+        task = asyncio.create_task(self._join_calendar_meeting(event))
+        self._meeting_tasks.add(task)
+        task.add_done_callback(self._meeting_tasks.discard)
+
+    async def _join_calendar_meeting(self, event) -> None:
+        """Join a calendar meeting, then leave it at its end time."""
+        meeting = self.service_manager.get_service("meeting")
+        if meeting is None or not meeting.is_running:
+            return
+        if meeting.is_in_meeting:
+            logger.info(f"Already in a meeting, not joining '{event.title}'")
+            return
+
+        logger.info(f"Auto-joining '{event.title}': {event.meeting_url}")
+        try:
+            await meeting.join_meeting(event.meeting_url)
+        except Exception as e:
+            logger.error(f"Auto-join failed for '{event.title}': {e}")
+            return
+
+        if not self.config.meeting.auto_leave:
+            return
+
+        delay = (event.end_time - datetime.now(timezone.utc)).total_seconds()
+        await asyncio.sleep(max(delay, 0))
+        current = meeting.current_meeting
+        if meeting.is_in_meeting and current and current.meeting_url == event.meeting_url:
+            logger.info(f"'{event.title}' is over, leaving")
+            await meeting.leave_meeting()
 
     async def start(self) -> None:
         """Start the Croom agent and all services."""
@@ -174,6 +232,9 @@ class CroomAgent:
 
         logger.info("Stopping Croom Agent...")
         self._running = False
+
+        for task in list(self._meeting_tasks):
+            task.cancel()
 
         # Stop all services
         await self.service_manager.stop_all()

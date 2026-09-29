@@ -28,11 +28,12 @@ from croom.video.processor import (
     RotateProcessor,
     BackgroundBlurProcessor,
 )
+from croom.core.service import Service
 
 logger = logging.getLogger(__name__)
 
 
-class VideoService:
+class VideoService(Service):
     """
     High-level video service for Croom.
 
@@ -52,6 +53,7 @@ class VideoService:
                 - rotation: Rotation angle (0, 90, 180, 270)
                 - background_blur: Enable background blur (default False)
         """
+        super().__init__("video")
         self.config = config or {}
 
         # Camera

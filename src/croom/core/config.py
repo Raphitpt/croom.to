@@ -43,7 +43,10 @@ class CalendarConfig:
     """Calendar integration configuration."""
     providers: List[str] = field(default_factory=lambda: ["google", "microsoft"])
     sync_interval_seconds: int = 60
-    google_credentials_path: str = ""
+    google_credentials_path: str = ""  # Service account or OAuth token JSON
+    google_delegate_email: str = ""  # Room account impersonated by a service account
+    calendar_ids: List[str] = field(default_factory=list)  # Empty: primary calendar
+    auto_join: bool = True  # Join meetings from the calendar automatically
     microsoft_tenant_id: str = ""
     microsoft_client_id: str = ""
 
@@ -204,6 +207,10 @@ class Config:
             "calendar": {
                 "providers": self.calendar.providers,
                 "sync_interval_seconds": self.calendar.sync_interval_seconds,
+                "google_credentials_path": self.calendar.google_credentials_path,
+                "google_delegate_email": self.calendar.google_delegate_email,
+                "calendar_ids": self.calendar.calendar_ids,
+                "auto_join": self.calendar.auto_join,
             },
             "ai": {
                 "enabled": self.ai.enabled,

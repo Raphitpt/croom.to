@@ -21,11 +21,12 @@ from croom.audio.processor import (
     NoiseReductionBackend,
     AudioProcessingPipeline,
 )
+from croom.core.service import Service
 
 logger = logging.getLogger(__name__)
 
 
-class AudioService:
+class AudioService(Service):
     """
     High-level audio service for Croom.
 
@@ -47,6 +48,7 @@ class AudioService:
                 - echo_cancellation: Enable AEC (default True)
                 - auto_gain: Enable AGC (default True)
         """
+        super().__init__("audio")
         self.config = config or {}
 
         # Devices

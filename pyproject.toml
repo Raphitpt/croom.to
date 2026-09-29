@@ -51,6 +51,10 @@ ui = [
 coral = [
     "tflite-runtime>=2.14.0",
 ]
+calendar = [
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.23.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",

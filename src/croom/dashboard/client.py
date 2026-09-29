@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List, Callable
 from enum import Enum
+from croom.core.service import Service
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class MessageType(Enum):
     ERROR = "error"
 
 
-class DashboardClient:
+class DashboardClient(Service):
     """
     WebSocket client for dashboard communication.
 
@@ -76,6 +77,7 @@ class DashboardClient:
                 - reconnect_interval: Seconds between reconnect attempts (default 5)
                 - max_reconnect_attempts: Max reconnect tries (default 10)
         """
+        super().__init__("dashboard")
         self.config = config or {}
 
         # Connection settings
@@ -90,7 +92,7 @@ class DashboardClient:
         self._max_reconnect_attempts = self.config.get('max_reconnect_attempts', 10)
 
         # State
-        self._state = ConnectionState.DISCONNECTED
+        self._connection_state = ConnectionState.DISCONNECTED
         self._ws: Optional[WebSocketClientProtocol] = None
         self._running = False
         self._registered = False
@@ -129,7 +131,7 @@ class DashboardClient:
     @property
     def state(self) -> ConnectionState:
         """Get current connection state."""
-        return self._state
+        return self._connection_state
 
     @property
     def device_id(self) -> str:
@@ -139,7 +141,22 @@ class DashboardClient:
     @property
     def is_connected(self) -> bool:
         """Whether connected to dashboard."""
-        return self._state == ConnectionState.CONNECTED
+        return self._connection_state == ConnectionState.CONNECTED
+
+    async def initialize(self) -> bool:
+        """Dashboard link needs the websockets library."""
+        if not WEBSOCKETS_AVAILABLE:
+            logger.error("websockets library not installed")
+        return WEBSOCKETS_AVAILABLE
+
+    async def start(self) -> None:
+        """Start the connection loop; it keeps retrying in the background."""
+        if not await self.connect():
+            logger.warning("Dashboard not reachable yet, retrying in background")
+
+    async def stop(self) -> None:
+        """Stop the connection loop."""
+        await self.disconnect()
 
     async def connect(self) -> bool:
         """
@@ -184,7 +201,7 @@ class DashboardClient:
             await self._ws.close()
             self._ws = None
 
-        self._state = ConnectionState.DISCONNECTED
+        self._connection_state = ConnectionState.DISCONNECTED
         self._registered = False
         logger.info("Disconnected from dashboard")
 
@@ -192,7 +209,7 @@ class DashboardClient:
         """Main connection management loop."""
         while self._running:
             try:
-                self._state = ConnectionState.CONNECTING
+                self._connection_state = ConnectionState.CONNECTING
                 logger.info(f"Connecting to dashboard: {self._url}")
 
                 async with websockets.connect(
@@ -205,7 +222,7 @@ class DashboardClient:
                     ping_timeout=10,
                 ) as ws:
                     self._ws = ws
-                    self._state = ConnectionState.CONNECTED
+                    self._connection_state = ConnectionState.CONNECTED
                     self._reconnect_count = 0
 
                     logger.info("Connected to dashboard")
@@ -239,7 +256,7 @@ class DashboardClient:
             except Exception as e:
                 logger.error(f"Connection error: {e}")
 
-                self._state = ConnectionState.RECONNECTING
+                self._connection_state = ConnectionState.RECONNECTING
                 self._reconnect_count += 1
 
                 # Notify listeners
@@ -256,7 +273,7 @@ class DashboardClient:
                 logger.info(f"Reconnecting in {self._reconnect_interval}s...")
                 await asyncio.sleep(self._reconnect_interval)
 
-        self._state = ConnectionState.DISCONNECTED
+        self._connection_state = ConnectionState.DISCONNECTED
 
     async def _register(self) -> None:
         """Register device with dashboard."""

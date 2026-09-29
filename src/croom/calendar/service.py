@@ -16,11 +16,12 @@ from croom.calendar.providers.base import (
 )
 from croom.calendar.providers.google import GoogleCalendarProvider
 from croom.calendar.providers.microsoft import MicrosoftCalendarProvider
+from croom.core.service import Service
 
 logger = logging.getLogger(__name__)
 
 
-class CalendarService:
+class CalendarService(Service):
     """
     High-level calendar service for Croom.
 
@@ -46,6 +47,7 @@ class CalendarService:
                 - poll_interval: How often to check for events (seconds)
                 - auto_join_minutes: Minutes before meeting to trigger auto-join
         """
+        super().__init__("calendar")
         self.config = config or {}
         self._provider: Optional[CalendarProvider] = None
         self._calendar_ids: List[str] = []
@@ -143,8 +145,9 @@ class CalendarService:
 
         self._running = True
 
-        # Initial fetch
+        # Initial fetch, and catch meetings already due at startup
         await self._fetch_events()
+        self._check_upcoming_meetings()
 
         # Start polling
         self._poll_task = asyncio.create_task(self._poll_loop())
@@ -252,8 +255,8 @@ class CalendarService:
             if event.end_time <= now:
                 continue
 
-            # Check if meeting is starting soon
-            if event.is_starting_soon(minutes=self._auto_join_minutes):
+            # Starting soon, or already started (e.g. the device just rebooted)
+            if event.is_starting_soon(minutes=self._auto_join_minutes) or event.is_happening_now():
                 self._notified_meetings.add(event.id)
 
                 logger.info(f"Meeting starting soon: {event.title}")
