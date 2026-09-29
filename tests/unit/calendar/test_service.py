@@ -2,96 +2,74 @@
 Tests for croom.calendar.service module.
 """
 
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch, AsyncMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from croom.calendar.service import (
-    CalendarEvent,
-    CalendarService,
-)
+from croom.calendar.providers.base import CalendarEvent, MeetingPlatform
+from croom.calendar.service import CalendarService
+
+MEET_URL = "https://meet.google.com/abc-defg-hij"
+
+
+def now():
+    return datetime.now(timezone.utc)
+
+
+def make_event(event_id="e1", title="Meeting", start_in=timedelta(hours=1),
+               duration=timedelta(hours=1), **kwargs):
+    start = now() + start_in
+    return CalendarEvent(id=event_id, title=title, start_time=start,
+                         end_time=start + duration, **kwargs)
+
+
+def make_provider(events=None, calendars=None, auth_ok=True):
+    provider = MagicMock()
+    provider.authenticate = AsyncMock(return_value=auth_ok)
+    provider.get_calendars = AsyncMock(
+        return_value=calendars if calendars is not None
+        else [{"id": "room@example.com", "name": "Room", "primary": True}]
+    )
+    provider.get_events = AsyncMock(return_value=events or [])
+    return provider
 
 
 class TestCalendarEvent:
     """Tests for CalendarEvent dataclass."""
 
     def test_basic_event(self):
-        """Test basic calendar event creation."""
-        start = datetime.now() + timedelta(hours=1)
-        end = start + timedelta(hours=1)
+        event = make_event("event-123", "Team Meeting")
 
-        event = CalendarEvent(
-            event_id="event-123",
-            title="Team Meeting",
-            start_time=start,
-            end_time=end,
-        )
-
-        assert event.event_id == "event-123"
+        assert event.id == "event-123"
         assert event.title == "Team Meeting"
         assert event.meeting_url is None
+        assert event.has_video_meeting is False
 
     def test_event_with_meeting(self):
-        """Test calendar event with meeting URL."""
-        start = datetime.now() + timedelta(hours=1)
-        end = start + timedelta(hours=1)
-
-        event = CalendarEvent(
-            event_id="event-123",
-            title="Video Call",
-            start_time=start,
-            end_time=end,
-            meeting_url="https://meet.google.com/abc-defg-hij",
-            meeting_platform="google_meet",
+        event = make_event(
+            "event-123", "Video Call",
+            meeting_url=MEET_URL,
+            meeting_platform=MeetingPlatform.GOOGLE_MEET,
         )
 
-        assert event.meeting_url == "https://meet.google.com/abc-defg-hij"
-        assert event.meeting_platform == "google_meet"
+        assert event.meeting_url == MEET_URL
+        assert event.meeting_platform == MeetingPlatform.GOOGLE_MEET
+        assert event.has_video_meeting is True
 
     def test_event_is_happening_now(self):
-        """Test checking if event is currently happening."""
-        start = datetime.now() - timedelta(minutes=30)
-        end = datetime.now() + timedelta(minutes=30)
-
-        event = CalendarEvent(
-            event_id="event-123",
-            title="Current Meeting",
-            start_time=start,
-            end_time=end,
-        )
-
+        event = make_event(start_in=timedelta(minutes=-30))
         assert event.is_happening_now() is True
 
     def test_event_not_happening_now(self):
-        """Test checking if future event is not happening."""
-        start = datetime.now() + timedelta(hours=2)
-        end = start + timedelta(hours=1)
-
-        event = CalendarEvent(
-            event_id="event-123",
-            title="Future Meeting",
-            start_time=start,
-            end_time=end,
-        )
-
+        event = make_event(start_in=timedelta(hours=2))
         assert event.is_happening_now() is False
 
     def test_event_time_until_start(self):
-        """Test calculating time until event starts."""
-        start = datetime.now() + timedelta(minutes=30)
-        end = start + timedelta(hours=1)
-
-        event = CalendarEvent(
-            event_id="event-123",
-            title="Soon Meeting",
-            start_time=start,
-            end_time=end,
-        )
+        event = make_event(start_in=timedelta(minutes=30))
 
         time_until = event.time_until_start()
-        assert time_until.total_seconds() > 0
-        assert time_until.total_seconds() < 1900  # ~31 minutes
+        assert 0 < time_until.total_seconds() < 1900  # ~31 minutes
 
 
 class TestCalendarService:
@@ -99,194 +77,148 @@ class TestCalendarService:
 
     @pytest.fixture
     def calendar_service(self):
-        """Create a calendar service instance."""
         return CalendarService()
 
     def test_initial_state(self, calendar_service):
-        """Test initial calendar service state."""
-        assert len(calendar_service._events) == 0
-        assert len(calendar_service._providers) == 0
+        assert calendar_service.name == "calendar"
+        assert calendar_service.provider is None
+        assert calendar_service.events == []
+        assert calendar_service.next_meeting is None
 
-    @pytest.mark.asyncio
-    async def test_add_provider(self, calendar_service):
-        """Test adding calendar provider."""
-        mock_provider = MagicMock()
-        mock_provider.name = "google"
+    async def test_initialize_uses_primary_calendar(self):
+        provider = make_provider()
+        service = CalendarService({"provider": "google", "credentials": {"oauth_token": {}}})
 
-        await calendar_service.add_provider(mock_provider)
+        with patch.dict(CalendarService.PROVIDERS, {"google": MagicMock(return_value=provider)}):
+            assert await service.initialize() is True
 
-        assert "google" in calendar_service._providers
+        provider.authenticate.assert_awaited_once_with({"oauth_token": {}})
+        assert service._calendar_ids == ["room@example.com"]
 
-    @pytest.mark.asyncio
-    async def test_remove_provider(self, calendar_service):
-        """Test removing calendar provider."""
-        mock_provider = MagicMock()
-        mock_provider.name = "google"
+    async def test_initialize_with_explicit_calendars(self):
+        provider = make_provider()
+        service = CalendarService({"provider": "google", "calendar_ids": ["a", "b"]})
 
-        await calendar_service.add_provider(mock_provider)
-        await calendar_service.remove_provider("google")
+        with patch.dict(CalendarService.PROVIDERS, {"google": MagicMock(return_value=provider)}):
+            assert await service.initialize() is True
 
-        assert "google" not in calendar_service._providers
+        provider.get_calendars.assert_not_awaited()
+        assert service._calendar_ids == ["a", "b"]
 
-    @pytest.mark.asyncio
-    async def test_sync_events(self, calendar_service):
-        """Test syncing events from providers."""
-        mock_provider = MagicMock()
-        mock_provider.name = "google"
-        mock_provider.fetch_events = AsyncMock(
-            return_value=[
-                CalendarEvent(
-                    event_id="event-1",
-                    title="Meeting 1",
-                    start_time=datetime.now(),
-                    end_time=datetime.now() + timedelta(hours=1),
-                ),
-            ]
-        )
+    async def test_initialize_fails_on_auth_error(self):
+        provider = make_provider(auth_ok=False)
+        service = CalendarService({"provider": "google"})
 
-        await calendar_service.add_provider(mock_provider)
-        await calendar_service.sync_events()
+        with patch.dict(CalendarService.PROVIDERS, {"google": MagicMock(return_value=provider)}):
+            assert await service.initialize() is False
 
-        assert len(calendar_service._events) > 0
+    async def test_initialize_unknown_provider(self):
+        service = CalendarService({"provider": "exchange-2003"})
+        assert await service.initialize() is False
 
-    def test_get_upcoming_events(self, calendar_service):
-        """Test getting upcoming events."""
-        now = datetime.now()
-        calendar_service._events = [
-            CalendarEvent("e1", "Past", now - timedelta(hours=2), now - timedelta(hours=1)),
-            CalendarEvent("e2", "Soon", now + timedelta(minutes=30), now + timedelta(hours=1)),
-            CalendarEvent("e3", "Later", now + timedelta(hours=3), now + timedelta(hours=4)),
-        ]
+    async def test_fetch_events(self, calendar_service):
+        calendar_service._provider = make_provider(events=[
+            make_event("e1", "Meeting 1", meeting_url=MEET_URL),
+            make_event("e2", "Cancelled", status="cancelled"),
+        ])
+        calendar_service._calendar_ids = ["room@example.com"]
 
-        upcoming = calendar_service.get_upcoming_events(hours=2)
+        await calendar_service._fetch_events()
 
-        assert len(upcoming) == 1
-        assert upcoming[0].title == "Soon"
+        assert [e.id for e in calendar_service.events] == ["e1"]
 
-    def test_get_next_meeting(self, calendar_service):
-        """Test getting next meeting with URL."""
-        now = datetime.now()
-        calendar_service._events = [
-            CalendarEvent("e1", "No URL", now + timedelta(minutes=10), now + timedelta(hours=1)),
-            CalendarEvent(
-                "e2",
-                "With URL",
-                now + timedelta(minutes=30),
-                now + timedelta(hours=1),
-                meeting_url="https://meet.google.com/abc",
-            ),
-        ]
+    def test_events_sorted_by_start(self, calendar_service):
+        later = make_event("e2", "Later", start_in=timedelta(hours=3))
+        soon = make_event("e1", "Soon", start_in=timedelta(minutes=30))
+        calendar_service._events = {e.id: e for e in (later, soon)}
 
-        next_meeting = calendar_service.get_next_meeting()
+        assert [e.title for e in calendar_service.events] == ["Soon", "Later"]
 
-        assert next_meeting is not None
-        assert next_meeting.title == "With URL"
-        assert next_meeting.meeting_url is not None
+    def test_next_meeting_needs_url(self, calendar_service):
+        no_url = make_event("e1", "No URL", start_in=timedelta(minutes=10))
+        with_url = make_event("e2", "With URL", start_in=timedelta(minutes=30),
+                              meeting_url=MEET_URL)
+        past = make_event("e3", "Past", start_in=timedelta(hours=-3), meeting_url=MEET_URL)
+        calendar_service._events = {e.id: e for e in (no_url, with_url, past)}
 
-    def test_get_events_for_day(self, calendar_service):
-        """Test getting events for a specific day."""
-        target_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        calendar_service._events = [
-            CalendarEvent(
-                "e1",
-                "Today",
-                target_date + timedelta(hours=10),
-                target_date + timedelta(hours=11),
-            ),
-            CalendarEvent(
-                "e2",
-                "Tomorrow",
-                target_date + timedelta(days=1, hours=10),
-                target_date + timedelta(days=1, hours=11),
-            ),
-        ]
+        calendar_service._update_next_meeting()
 
-        today_events = calendar_service.get_events_for_day(target_date)
+        assert calendar_service.next_meeting is with_url
 
-        assert len(today_events) == 1
-        assert today_events[0].title == "Today"
+    async def test_get_today_events(self, calendar_service):
+        today_start = now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = CalendarEvent("e1", "Today", today_start + timedelta(minutes=1),
+                              today_start + timedelta(hours=1))
+        tomorrow = CalendarEvent("e2", "Tomorrow", today_start + timedelta(days=1, hours=10),
+                                 today_start + timedelta(days=1, hours=11))
+        calendar_service._events = {e.id: e for e in (today, tomorrow)}
 
-    def test_find_event_by_id(self, calendar_service):
-        """Test finding event by ID."""
-        calendar_service._events = [
-            CalendarEvent("e1", "Event 1", datetime.now(), datetime.now() + timedelta(hours=1)),
-            CalendarEvent("e2", "Event 2", datetime.now(), datetime.now() + timedelta(hours=1)),
-        ]
+        today_events = await calendar_service.get_today_events()
 
-        event = calendar_service.find_event("e2")
+        assert [e.title for e in today_events] == ["Today"]
 
-        assert event is not None
-        assert event.title == "Event 2"
+    def test_get_event_by_id(self, calendar_service):
+        calendar_service._events = {"e1": make_event("e1", "Event 1"),
+                                    "e2": make_event("e2", "Event 2")}
 
-    def test_find_nonexistent_event(self, calendar_service):
-        """Test finding non-existent event returns None."""
-        event = calendar_service.find_event("nonexistent")
-        assert event is None
+        assert calendar_service.get_event_by_id("e2").title == "Event 2"
+
+    def test_get_nonexistent_event(self, calendar_service):
+        assert calendar_service.get_event_by_id("nonexistent") is None
 
 
 class TestCalendarServiceAutoJoin:
-    """Tests for calendar auto-join functionality."""
+    """Tests for meeting-starting notifications that drive auto-join."""
 
     @pytest.fixture
     def calendar_service(self):
-        """Create a calendar service instance."""
-        return CalendarService()
+        service = CalendarService({"auto_join_minutes": 2})
+        self.started = []
+        service.on_meeting_starting(self.started.append)
+        return service
 
-    @pytest.mark.asyncio
-    async def test_start_auto_join_monitor(self, calendar_service):
-        """Test starting auto-join monitor."""
-        with patch("asyncio.create_task") as mock_task:
-            await calendar_service.start_auto_join_monitor()
-            # Should create monitoring task
+    def _check(self, service, *events):
+        service._events = {e.id: e for e in events}
+        service._check_upcoming_meetings()
 
-    @pytest.mark.asyncio
-    async def test_stop_auto_join_monitor(self, calendar_service):
-        """Test stopping auto-join monitor."""
-        calendar_service._auto_join_task = AsyncMock()
-        calendar_service._auto_join_task.cancel = MagicMock()
+    def test_notifies_meeting_starting_soon(self, calendar_service):
+        event = make_event(start_in=timedelta(minutes=1), meeting_url=MEET_URL)
+        self._check(calendar_service, event)
+        assert self.started == [event]
 
-        await calendar_service.stop_auto_join_monitor()
-        # Should cancel monitoring task
+    def test_notifies_meeting_in_progress(self, calendar_service):
+        event = make_event(start_in=timedelta(minutes=-10), meeting_url=MEET_URL)
+        self._check(calendar_service, event)
+        assert self.started == [event]
 
-    def test_should_auto_join(self, calendar_service):
-        """Test determining if should auto-join meeting."""
-        now = datetime.now()
-        event = CalendarEvent(
-            "e1",
-            "Meeting",
-            now + timedelta(minutes=1),  # Starts in 1 minute
-            now + timedelta(hours=1),
-            meeting_url="https://meet.google.com/abc",
-        )
+    def test_not_too_early(self, calendar_service):
+        self._check(calendar_service,
+                    make_event(start_in=timedelta(minutes=30), meeting_url=MEET_URL))
+        assert self.started == []
 
-        # Within join window
-        should_join = calendar_service.should_auto_join(event, join_early_minutes=2)
-        assert should_join is True
+    def test_not_without_url(self, calendar_service):
+        self._check(calendar_service, make_event(start_in=timedelta(minutes=1)))
+        assert self.started == []
 
-    def test_should_not_auto_join_too_early(self, calendar_service):
-        """Test should not auto-join if too early."""
-        now = datetime.now()
-        event = CalendarEvent(
-            "e1",
-            "Meeting",
-            now + timedelta(minutes=30),  # Starts in 30 minutes
-            now + timedelta(hours=1),
-            meeting_url="https://meet.google.com/abc",
-        )
+    def test_not_after_end(self, calendar_service):
+        self._check(calendar_service,
+                    make_event(start_in=timedelta(hours=-2), meeting_url=MEET_URL))
+        assert self.started == []
 
-        should_join = calendar_service.should_auto_join(event, join_early_minutes=2)
-        assert should_join is False
+    def test_notifies_only_once(self, calendar_service):
+        event = make_event(start_in=timedelta(minutes=1), meeting_url=MEET_URL)
+        self._check(calendar_service, event)
+        calendar_service._check_upcoming_meetings()
+        assert self.started == [event]
 
-    def test_should_not_auto_join_no_url(self, calendar_service):
-        """Test should not auto-join if no meeting URL."""
-        now = datetime.now()
-        event = CalendarEvent(
-            "e1",
-            "Meeting",
-            now + timedelta(minutes=1),
-            now + timedelta(hours=1),
-            # No meeting_url
-        )
+    async def test_start_checks_immediately(self, calendar_service):
+        event = make_event(start_in=timedelta(minutes=-5), meeting_url=MEET_URL)
+        calendar_service._provider = make_provider(events=[event])
+        calendar_service._calendar_ids = ["room@example.com"]
+        calendar_service._poll_interval = 3600
 
-        should_join = calendar_service.should_auto_join(event, join_early_minutes=2)
-        assert should_join is False
+        await calendar_service.start()
+        try:
+            assert self.started == [event]
+        finally:
+            await calendar_service.stop()

@@ -26,26 +26,37 @@ class TestAudioDeviceInfo:
         from croom.audio.device import AudioDeviceInfo, AudioDeviceType
 
         info = AudioDeviceInfo(
-            device_id="alsa_output.pci-0000_00_1f.3",
+            id="alsa_output.pci-0000_00_1f.3",
             name="Built-in Audio",
             device_type=AudioDeviceType.OUTPUT,
         )
         assert info.name == "Built-in Audio"
         assert info.device_type == AudioDeviceType.OUTPUT
         assert info.is_default is False
+        assert info.is_output is True
+        assert info.is_input is False
 
     def test_input_device(self):
         """Test input device info."""
         from croom.audio.device import AudioDeviceInfo, AudioDeviceType
 
         info = AudioDeviceInfo(
-            device_id="alsa_input.usb-123",
+            id="alsa_input.usb-123",
             name="USB Microphone",
             device_type=AudioDeviceType.INPUT,
             is_default=True,
         )
         assert info.device_type == AudioDeviceType.INPUT
         assert info.is_default is True
+        assert info.is_input is True
+
+    def test_duplex_device(self):
+        """Test duplex device is both input and output."""
+        from croom.audio.device import AudioDeviceInfo, AudioDeviceType
+
+        info = AudioDeviceInfo(id="hw:1", name="Speakerphone", device_type=AudioDeviceType.DUPLEX)
+        assert info.is_input is True
+        assert info.is_output is True
 
 
 class TestAudioService:
@@ -82,12 +93,14 @@ class TestProcessorConfig:
 
     def test_processor_config_defaults(self):
         """Test processor config default values."""
-        from croom.audio.processor import ProcessorConfig
+        from croom.audio.processor import NoiseReductionBackend, ProcessorConfig
 
         config = ProcessorConfig()
         assert config.sample_rate == 48000
         assert config.channels == 1
-        assert config.enable_noise_reduction is True
+        assert config.noise_reduction is True
+        assert config.noise_reduction_backend == NoiseReductionBackend.RNNOISE
+        assert config.echo_cancellation is True
 
     def test_processor_config_custom(self):
         """Test processor config custom values."""
@@ -96,11 +109,11 @@ class TestProcessorConfig:
         config = ProcessorConfig(
             sample_rate=44100,
             channels=2,
-            enable_noise_reduction=False,
+            noise_reduction=False,
         )
         assert config.sample_rate == 44100
         assert config.channels == 2
-        assert config.enable_noise_reduction is False
+        assert config.noise_reduction is False
 
 
 class TestNoiseReductionBackend:
