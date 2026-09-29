@@ -124,25 +124,21 @@ class TestShellService:
         assert service._is_allowed("uptime") is True
         assert service._is_allowed("df -h") is False
 
-    @pytest.mark.xfail(strict=True, reason="SECURITY: prefix check + shell=True allows chaining")
     def test_chained_command_blocked(self):
         """An allowed prefix must not let a second command through."""
         service = ShellService()
         assert service._is_allowed("ls; rm -rf /") is False
 
-    @pytest.mark.xfail(strict=True, reason="SECURITY: 'systemctl status' entry allows any systemctl verb")
     def test_systemctl_limited_to_status(self):
         """Only 'systemctl status' is whitelisted, not other verbs."""
         service = ShellService()
         assert service._is_allowed("systemctl stop croom") is False
 
-    @pytest.mark.xfail(strict=True, reason="SECURITY: startswith('ip') also matches iptables")
     def test_prefix_does_not_match_other_binaries(self):
         """'ip' in the whitelist must not allow 'iptables'."""
         service = ShellService()
         assert service._is_allowed("iptables -F") is False
 
-    @pytest.mark.xfail(strict=True, reason="SECURITY: apt, pip and raspi-config are whitelisted")
     def test_package_managers_not_whitelisted(self):
         """Remote shell must not install software or reconfigure the OS."""
         service = ShellService()
@@ -153,7 +149,7 @@ class TestShellService:
         """Test executing allowed command."""
         service = ShellService()
 
-        with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_exec:
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = fake_process(stdout=b"output")
 
             returncode, stdout, stderr = await service.execute("df -h")
@@ -161,26 +157,64 @@ class TestShellService:
         assert returncode == 0
         assert stdout == "output"
         assert stderr == ""
-        assert mock_exec.call_args.args[0] == "df -h"
+        assert mock_exec.call_args.args[:2] == ("df", "-h")
         assert service.get_history()[-1]["command"] == "df -h"
 
     async def test_execute_blocked_command(self):
         """Test executing blocked command never spawns a process."""
         service = ShellService()
 
-        with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_exec:
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             returncode, stdout, stderr = await service.execute("rm -rf /")
 
         mock_exec.assert_not_called()
         assert returncode == -1
         assert "not allowed" in stderr.lower()
 
+    def test_ip_limited_to_read_only_subcommands(self):
+        """'ip' cannot take the network down."""
+        service = ShellService()
+        assert service._is_allowed("ip addr show") is True
+        assert service._is_allowed("ip link set eth0 down") is False
+        assert service._is_allowed("ip addr flush dev eth0") is False
+
+    def test_operators_and_substitution_rejected(self):
+        """Shell syntax is refused outright."""
+        service = ShellService()
+        for command in ("df -h && rm -rf /", "cat $(id)", "ls `id`", "ps > /tmp/x",
+                        "grep x | sh", "ls\nrm -rf /"):
+            assert service._is_allowed(command) is False, command
+
+    def test_path_to_other_binary_rejected(self):
+        """An allowed name must match exactly, not as a path suffix."""
+        service = ShellService()
+        assert service._is_allowed("/tmp/evil/ls") is False
+
+    def test_empty_whitelist_allows_nothing(self):
+        """An empty allowlist fails closed."""
+        service = ShellService(allowed_commands=[])
+        assert service._is_allowed("uptime") is False
+
+    async def test_execute_does_not_use_a_shell(self):
+        """Arguments reach the program verbatim, never a shell."""
+        service = ShellService()
+
+        with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_shell, \
+             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = fake_process()
+            await service.execute("grep -r 'a b' /var/log")
+
+        mock_shell.assert_not_called()
+        assert mock_exec.call_args.args[:4] == ("grep", "-r", "a b", "/var/log")
+
     async def test_execute_with_timeout(self):
         """Test command execution with timeout."""
         service = ShellService()
 
-        with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_exec:
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             proc = fake_process()
+            proc.returncode = None  # still running
+            proc.kill = MagicMock()
             proc.communicate.side_effect = asyncio.TimeoutError()
             mock_exec.return_value = proc
 
@@ -188,6 +222,7 @@ class TestShellService:
 
         assert returncode == -1
         assert "timed out" in stderr.lower()
+        proc.kill.assert_called_once()
 
 
 class TestDiagnosticsService:

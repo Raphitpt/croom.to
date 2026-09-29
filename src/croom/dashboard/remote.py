@@ -6,6 +6,7 @@ shell access, diagnostics, and device control.
 """
 
 import asyncio
+import shlex
 import base64
 import io
 import logging
@@ -219,21 +220,41 @@ class ScreenshotService:
 
 
 class ShellService:
-    """Service for executing shell commands."""
+    """Service for running read-only diagnostic commands from the dashboard.
+
+    Commands never go through a shell: they are split with shlex and run
+    directly, so operators like ``;``, ``&&`` or ``|`` cannot chain a second
+    command. Each allowlist entry is a sequence of words the command must
+    start with, e.g. ``systemctl status`` allows ``systemctl status croom``
+    but not ``systemctl stop croom``.
+    """
+
+    # Read-only diagnostics only: nothing that installs, reconfigures or
+    # interacts (top/htop would just block until the timeout)
+    DEFAULT_ALLOWED_COMMANDS = [
+        'ls', 'cat', 'head', 'tail', 'grep', 'df', 'free', 'uptime',
+        'ps', 'netstat', 'ss', 'ping', 'traceroute', 'dig', 'nslookup',
+        'ip addr show', 'ip route show', 'ip link show',
+        'systemctl status', 'journalctl', 'dmesg',
+        'vcgencmd measure_temp', 'vcgencmd get_throttled',
+        'sw_vers', 'pmset -g',
+    ]
+
+    # Rejected even though they would be inert without a shell, so that a
+    # dashboard operator gets a clear refusal instead of a confusing result
+    SHELL_OPERATORS = (';', '&', '|', '`', '$(', '>', '<', '\n')
 
     def __init__(self, allowed_commands: Optional[List[str]] = None):
         """
         Initialize shell service.
 
         Args:
-            allowed_commands: List of allowed command prefixes for security
+            allowed_commands: Allowed command prefixes, as words
+                (defaults to DEFAULT_ALLOWED_COMMANDS)
         """
-        self._allowed_commands = allowed_commands or [
-            'ls', 'cat', 'head', 'tail', 'grep', 'df', 'free', 'uptime',
-            'ps', 'top', 'htop', 'netstat', 'ss', 'ip', 'ping', 'traceroute',
-            'dig', 'nslookup', 'systemctl status', 'journalctl', 'dmesg',
-            'vcgencmd', 'raspi-config', 'apt', 'pip',
-        ]
+        self._allowed_commands = list(
+            self.DEFAULT_ALLOWED_COMMANDS if allowed_commands is None else allowed_commands
+        )
         self._command_history: List[Dict[str, Any]] = []
 
     async def execute(
@@ -255,11 +276,13 @@ class ShellService:
         """
         # Security check
         if not self._is_allowed(command):
-            return (-1, "", f"Command not allowed: {command.split()[0]}")
+            name = command.split()[0] if command.split() else command
+            return (-1, "", f"Command not allowed: {name}")
 
+        proc = None
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
+            proc = await asyncio.create_subprocess_exec(
+                *shlex.split(command),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -286,23 +309,30 @@ class ShellService:
             return result
 
         except asyncio.TimeoutError:
+            if proc and proc.returncode is None:
+                proc.kill()
             return (-1, "", f"Command timed out after {timeout}s")
         except Exception as e:
             return (-1, "", str(e))
 
     def _is_allowed(self, command: str) -> bool:
-        """Check if command is in the allowed list."""
-        if not self._allowed_commands:
-            return True
+        """Check the command starts with the words of an allowlist entry."""
+        if any(op in command for op in self.SHELL_OPERATORS):
+            return False
 
-        cmd_start = command.strip().split()[0] if command.strip() else ""
+        try:
+            words = shlex.split(command)
+        except ValueError:
+            return False
+        if not words:
+            return False
 
         for allowed in self._allowed_commands:
-            if command.strip().startswith(allowed):
-                return True
-            if cmd_start == allowed.split()[0]:
+            prefix = allowed.split()
+            if words[:len(prefix)] == prefix:
                 return True
 
+        # Empty allowlist: nothing is allowed
         return False
 
     def get_history(self, limit: int = 100) -> List[Dict[str, Any]]:
