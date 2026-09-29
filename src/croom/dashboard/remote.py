@@ -675,6 +675,10 @@ class DiagnosticsService:
 class DeviceControlService:
     """Service for device control operations."""
 
+    # Only Croom's own units and packages can be managed remotely
+    ALLOWED_SERVICES = ("croom", "croom-agent", "croom-ui", "croom-dashboard")
+    ALLOWED_PACKAGES = ("croom",)
+
     async def restart_device(self, delay: int = 5) -> bool:
         """
         Restart the device.
@@ -711,6 +715,10 @@ class DeviceControlService:
         Returns:
             True if restart successful
         """
+        if service not in self.ALLOWED_SERVICES:
+            logger.warning(f"Refusing to restart non-Croom service: {service}")
+            return False
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 'sudo', 'systemctl', 'restart', service,
@@ -771,6 +779,9 @@ class DeviceControlService:
         Returns:
             Tuple of (success, output)
         """
+        if package not in self.ALLOWED_PACKAGES:
+            return False, f"Package not allowed: {package}"
+
         try:
             # Update package lists
             proc = await asyncio.create_subprocess_exec(

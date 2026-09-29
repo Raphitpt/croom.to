@@ -251,9 +251,10 @@ class TestDeviceControlService:
         """Test device restart."""
         service = DeviceControlService()
 
-        with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_exec:
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_process = AsyncMock()
             mock_process.returncode = 0
+            mock_process.communicate.return_value = (b"", b"")
             mock_exec.return_value = mock_process
 
             result = await service.restart_device(delay=0)
@@ -264,9 +265,10 @@ class TestDeviceControlService:
         """Test service restart."""
         service = DeviceControlService()
 
-        with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_exec:
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_process = AsyncMock()
             mock_process.returncode = 0
+            mock_process.communicate.return_value = (b"", b"")
             mock_exec.return_value = mock_process
 
             result = await service.restart_service("croom")
@@ -295,7 +297,7 @@ class TestDeviceControlService:
         """Test software update."""
         service = DeviceControlService()
 
-        with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_exec:
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_process = AsyncMock()
             mock_process.returncode = 0
             mock_process.communicate.return_value = (b"Updated", b"")

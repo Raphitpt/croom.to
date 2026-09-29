@@ -285,3 +285,50 @@ def clean_environment(monkeypatch):
     for key in list(os.environ.keys()):
         if key.startswith("CROOM_"):
             monkeypatch.delenv(key, raising=False)
+
+
+# ============================================================================
+# System Command Guard
+# ============================================================================
+
+# Commands that must never really run from a test (a missing mock would
+# reboot or reconfigure the developer machine).
+_FORBIDDEN_COMMANDS = {"sudo", "shutdown", "reboot", "halt", "poweroff"}
+
+
+def _is_forbidden(cmd) -> bool:
+    import shlex
+
+    if isinstance(cmd, (str, bytes)):
+        cmd = cmd.decode() if isinstance(cmd, bytes) else cmd
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            tokens = cmd.split()
+    else:
+        tokens = [str(c) for c in cmd]
+    return any(os.path.basename(t) in _FORBIDDEN_COMMANDS for t in tokens)
+
+
+@pytest.fixture(autouse=True)
+def block_system_commands(monkeypatch):
+    """Fail any test that would really run a privileged or power command."""
+    import subprocess
+
+    real_popen = subprocess.Popen
+
+    class GuardedPopen(real_popen):
+        def __init__(self, args, *a, **kw):
+            if _is_forbidden(args):
+                raise RuntimeError(f"Test tried to run a forbidden command: {args!r}")
+            super().__init__(args, *a, **kw)
+
+    real_system = os.system
+
+    def guarded_system(cmd):
+        if _is_forbidden(cmd):
+            raise RuntimeError(f"Test tried to run a forbidden command: {cmd!r}")
+        return real_system(cmd)
+
+    monkeypatch.setattr(subprocess, "Popen", GuardedPopen)
+    monkeypatch.setattr(os, "system", guarded_system)
