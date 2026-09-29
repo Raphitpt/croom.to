@@ -44,12 +44,20 @@ def video_options(config: Config) -> Dict[str, Any]:
 
 
 def display_options(config: Config) -> Dict[str, Any]:
-    backend = config.display.backend
-    return {
+    display = config.display
+    backend = display.backend
+    options = {
         "cec_enabled": backend in ("auto", "hdmi_cec"),
         "ddc_enabled": backend in ("auto", "ddc"),
-        "auto_power_on": config.display.power_on_boot,
+        "auto_power_on": display.power_on_boot,
     }
+    if backend in ("auto", "firetv") and display.firetv_host:
+        options.update(
+            firetv_host=display.firetv_host,
+            firetv_port=display.firetv_port,
+            firetv_hdmi_input=display.firetv_hdmi_input,
+        )
+    return options
 
 
 def calendar_options(config: Config) -> Optional[Dict[str, Any]]:

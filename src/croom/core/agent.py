@@ -174,6 +174,11 @@ class CroomAgent:
             logger.info(f"Already in a meeting, not joining '{event.title}'")
             return
 
+        display = self.service_manager.get_service("display")
+        if display is not None and display.is_running:
+            # Wake the TV and switch it to this computer's input
+            await display.on_meeting_start()
+
         logger.info(f"Auto-joining '{event.title}': {event.meeting_url}")
         try:
             await meeting.join_meeting(event.meeting_url)
@@ -190,6 +195,10 @@ class CroomAgent:
         if meeting.is_in_meeting and current and current.meeting_url == event.meeting_url:
             logger.info(f"'{event.title}' is over, leaving")
             await meeting.leave_meeting()
+            if display is not None and display.is_running:
+                await display.on_meeting_end()
+                if self.config.display.power_off_after_meeting:
+                    await display.power_off()
 
     async def start(self) -> None:
         """Start the Croom agent and all services."""

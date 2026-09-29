@@ -65,3 +65,21 @@ class TestServiceOptions:
 
     def test_calendar_unreadable_credentials(self, temp_dir):
         assert service_options.google_credentials(str(temp_dir / "missing.json")) is None
+
+    def test_display_firetv_options(self):
+        config = Config()
+        config.display.firetv_host = "192.168.1.50"
+        config.display.firetv_hdmi_input = "com.example.tv/.HdmiInputService/HW2"
+
+        options = service_options.display_options(config)
+
+        assert options["firetv_host"] == "192.168.1.50"
+        assert options["firetv_port"] == 5555
+        assert options["firetv_hdmi_input"] == "com.example.tv/.HdmiInputService/HW2"
+
+    def test_display_firetv_ignored_for_other_backends(self):
+        config = Config()
+        config.display.backend = "hdmi_cec"
+        config.display.firetv_host = "192.168.1.50"
+
+        assert "firetv_host" not in service_options.display_options(config)

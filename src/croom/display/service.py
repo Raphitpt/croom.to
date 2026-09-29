@@ -20,6 +20,7 @@ from croom.display.cec import (
     CECPowerStatus,
 )
 from croom.core.service import Service
+from croom.display.firetv import FireTVController
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +400,7 @@ class DisplayService(Service):
 
     Manages displays and provides HDMI-CEC and DDC/CI control.
     Automatically selects the best available control method:
+    - Fire TV over ADB when a TV address is configured (e.g. Mac + USB-C/HDMI)
     - CEC for Raspberry Pi and HDMI-connected TVs
     - DDC/CI for x86_64 systems with external monitors
     """
@@ -416,6 +418,9 @@ class DisplayService(Service):
                 - auto_power_off: Power off display after inactivity
                 - power_off_timeout: Seconds of inactivity before power off
                 - wake_on_motion: Wake display on motion detection
+                - firetv_host: Fire TV IP address, enables ADB control
+                - firetv_port: Fire TV ADB port (default 5555)
+                - firetv_hdmi_input: TV input id to switch to on power on
         """
         super().__init__("display")
         self.config = config or {}
@@ -424,11 +429,14 @@ class DisplayService(Service):
         self._cec: Optional[CECController] = None
         self._cec_enabled = self.config.get('cec_enabled', True)
 
+        # Fire TV controller (ADB over the network)
+        self._firetv: Optional[FireTVController] = None
+
         # DDC/CI controller (for x86_64 / monitors)
         self._ddc: Optional[DDCController] = None
         self._ddc_enabled = self.config.get('ddc_enabled', True)
 
-        # Control method: 'cec', 'ddc', or None
+        # Control method: 'firetv', 'cec', 'ddc', or None
         self._control_method: Optional[str] = None
 
         # State
@@ -459,8 +467,27 @@ class DisplayService(Service):
             True if initialization successful
         """
         try:
+            # Fire TV when configured explicitly (no CEC over USB-C/HDMI)
+            firetv_host = self.config.get('firetv_host')
+            if firetv_host:
+                self._firetv = FireTVController(
+                    host=firetv_host,
+                    port=self.config.get('firetv_port', 5555),
+                    hdmi_input=self.config.get('firetv_hdmi_input', ''),
+                )
+                if await self._firetv.initialize():
+                    self._control_method = 'firetv'
+                    power = await self._firetv.get_tv_power_status()
+                    if power == CECPowerStatus.ON:
+                        self._display_state = DisplayState.ON
+                    elif power == CECPowerStatus.STANDBY:
+                        self._display_state = DisplayState.STANDBY
+                else:
+                    logger.warning(f"Fire TV {firetv_host} not reachable, trying CEC/DDC")
+                    self._firetv = None
+
             # Initialize CEC if enabled (preferred for Raspberry Pi)
-            if self._cec_enabled:
+            if self._cec_enabled and not self._control_method:
                 cec_device = self.config.get('cec_device', '/dev/cec0')
                 self._cec = CECController(device=cec_device)
 
@@ -478,8 +505,8 @@ class DisplayService(Service):
                     logger.debug("CEC not available, will try DDC/CI")
                     self._cec = None
 
-            # Initialize DDC/CI if CEC not available (for x86_64 systems)
-            if not self._cec and self._ddc_enabled:
+            # Initialize DDC/CI if no TV control (for x86_64 systems)
+            if not self._control_method and self._ddc_enabled:
                 self._ddc = DDCController()
 
                 if await self._ddc.initialize():
@@ -795,6 +822,13 @@ class DisplayService(Service):
                 await asyncio.sleep(2)  # Wait for TV to wake
                 await self._cec.set_active_source()
 
+        elif self._control_method == 'firetv' and self._firetv:
+            success = await self._firetv.power_on_tv()
+
+            if success:
+                await asyncio.sleep(2)  # Wait for Fire OS to wake
+                await self._firetv.set_active_source()
+
         elif self._control_method == 'ddc' and self._ddc:
             success = await self._ddc.power_on()
 
@@ -822,6 +856,9 @@ class DisplayService(Service):
 
         if self._control_method == 'cec' and self._cec:
             success = await self._cec.power_off_tv()
+
+        elif self._control_method == 'firetv' and self._firetv:
+            success = await self._firetv.power_off_tv()
 
         elif self._control_method == 'ddc' and self._ddc:
             success = await self._ddc.power_off()
@@ -856,8 +893,9 @@ class DisplayService(Service):
         Returns:
             Current power state
         """
-        if self._control_method == 'cec' and self._cec:
-            power = await self._cec.get_tv_power_status()
+        tv = self._tv_controller()
+        if tv:
+            power = await tv.get_tv_power_status()
 
             if power == CECPowerStatus.ON:
                 self._display_state = DisplayState.ON
@@ -918,28 +956,40 @@ class DisplayService(Service):
         Returns:
             True if successful
         """
-        if not self._cec or not self._cec.is_available:
+        tv = self._tv_controller()
+        if not tv or not tv.is_available:
             return False
 
-        return await self._cec.set_active_source()
+        return await tv.set_active_source()
 
     async def volume_up(self) -> bool:
         """Send volume up command."""
-        if not self._cec or not self._cec.is_available:
+        tv = self._tv_controller()
+        if not tv or not tv.is_available:
             return False
-        return await self._cec.volume_up()
+        return await tv.volume_up()
 
     async def volume_down(self) -> bool:
         """Send volume down command."""
-        if not self._cec or not self._cec.is_available:
+        tv = self._tv_controller()
+        if not tv or not tv.is_available:
             return False
-        return await self._cec.volume_down()
+        return await tv.volume_down()
 
     async def mute(self) -> bool:
         """Send mute toggle command."""
-        if not self._cec or not self._cec.is_available:
+        tv = self._tv_controller()
+        if not tv or not tv.is_available:
             return False
-        return await self._cec.mute()
+        return await tv.mute()
+
+    def _tv_controller(self):
+        """Active TV controller (CEC or Fire TV), None for DDC/no control."""
+        if self._control_method == 'firetv':
+            return self._firetv
+        if self._control_method == 'cec':
+            return self._cec
+        return None
 
     @property
     def displays(self) -> List[DisplayInfo]:

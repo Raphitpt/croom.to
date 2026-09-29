@@ -92,10 +92,14 @@ class VideoConfig:
 @dataclass
 class DisplayConfig:
     """Display configuration."""
-    backend: str = "auto"  # 'hdmi_cec', 'ddc', 'none', 'auto'
+    backend: str = "auto"  # 'firetv', 'hdmi_cec', 'ddc', 'none', 'auto'
     power_on_boot: bool = True
     power_off_shutdown: bool = True
     touch_enabled: bool = True
+    power_off_after_meeting: bool = False  # Put the TV in standby when a meeting ends
+    firetv_host: str = ""  # Fire TV IP address (ADB debugging enabled on the TV)
+    firetv_port: int = 5555
+    firetv_hdmi_input: str = ""  # TV input id of the room computer's HDMI port
 
 
 @dataclass
@@ -242,6 +246,10 @@ class Config:
                 "power_on_boot": self.display.power_on_boot,
                 "power_off_shutdown": self.display.power_off_shutdown,
                 "touch_enabled": self.display.touch_enabled,
+                "power_off_after_meeting": self.display.power_off_after_meeting,
+                "firetv_host": self.display.firetv_host,
+                "firetv_port": self.display.firetv_port,
+                "firetv_hdmi_input": self.display.firetv_hdmi_input,
             },
             "dashboard": {
                 "enabled": self.dashboard.enabled,

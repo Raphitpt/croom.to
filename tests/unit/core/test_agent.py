@@ -30,7 +30,14 @@ def agent():
     meeting.is_in_meeting = False
     meeting.join_meeting = AsyncMock()
     meeting.leave_meeting = AsyncMock()
-    agent.service_manager.get_service = MagicMock(return_value=meeting)
+    display = MagicMock()
+    display.is_running = True
+    display.on_meeting_start = AsyncMock()
+    display.on_meeting_end = AsyncMock()
+    display.power_off = AsyncMock()
+    agent.display = display
+    services = {"meeting": meeting, "display": display}
+    agent.service_manager.get_service = MagicMock(side_effect=services.get)
     return agent, meeting
 
 
@@ -89,3 +96,47 @@ class TestCalendarAutoJoin:
         await agent._join_calendar_meeting(make_event())
 
         meeting.leave_meeting.assert_not_awaited()
+
+
+class TestCalendarMeetingDisplay:
+    async def test_tv_woken_before_joining(self, agent):
+        agent, meeting = agent
+        agent.config.meeting.auto_leave = False
+        order = []
+        agent.display.on_meeting_start.side_effect = lambda: order.append("tv")
+        meeting.join_meeting.side_effect = lambda url: order.append("join")
+
+        await agent._join_calendar_meeting(make_event())
+
+        assert order == ["tv", "join"]
+
+    async def test_tv_standby_after_meeting_when_configured(self, agent):
+        agent, meeting = agent
+        agent.config.meeting.auto_leave = True
+        agent.config.display.power_off_after_meeting = True
+        event = make_event(minutes_left=0)
+
+        async def join(url):
+            meeting.is_in_meeting = True
+            meeting.current_meeting = SimpleNamespace(meeting_url=url)
+
+        meeting.join_meeting.side_effect = join
+
+        await agent._join_calendar_meeting(event)
+
+        agent.display.power_off.assert_awaited_once()
+
+    async def test_tv_left_on_by_default(self, agent):
+        agent, meeting = agent
+        agent.config.meeting.auto_leave = True
+        event = make_event(minutes_left=0)
+
+        async def join(url):
+            meeting.is_in_meeting = True
+            meeting.current_meeting = SimpleNamespace(meeting_url=url)
+
+        meeting.join_meeting.side_effect = join
+
+        await agent._join_calendar_meeting(event)
+
+        agent.display.power_off.assert_not_awaited()
