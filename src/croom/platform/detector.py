@@ -6,6 +6,7 @@ Detects the current hardware platform and available capabilities.
 
 import os
 import platform
+import sys
 import subprocess
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -21,6 +22,7 @@ class DeviceType(Enum):
     NUC = "nuc"  # Intel NUC or mini PCs
     SERVER = "server"  # Server/workstation class
     JETSON = "jetson"  # NVIDIA Jetson
+    MAC = "mac"  # Mac mini / any Mac running macOS
     UNKNOWN = "unknown"
 
 
@@ -99,7 +101,11 @@ class PlatformInfo:
     @property
     def is_desktop_class(self) -> bool:
         """Check if this is a desktop/server class machine."""
-        return self.device in (DeviceType.PC, DeviceType.NUC, DeviceType.SERVER)
+        return self.device in (DeviceType.PC, DeviceType.NUC, DeviceType.SERVER, DeviceType.MAC)
+
+    @property
+    def is_macos(self) -> bool:
+        return self.device == DeviceType.MAC
 
     @property
     def supports_hailo(self) -> bool:
@@ -140,6 +146,17 @@ class PlatformInfo:
         if "amd" in self.ai_accelerators:
             return "amd"
         return "cpu"
+
+
+def _sysctl(name: str) -> str:
+    """Read a macOS sysctl value, empty string if unavailable."""
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", name], capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 class PlatformDetector:
@@ -220,6 +237,9 @@ class PlatformDetector:
         os_version = ""
         os_codename = ""
 
+        if sys.platform == "darwin":
+            return "macos", platform.mac_ver()[0], ""
+
         # Try reading /etc/os-release
         if os.path.exists("/etc/os-release"):
             with open("/etc/os-release") as f:
@@ -236,6 +256,9 @@ class PlatformDetector:
     @staticmethod
     def _detect_device() -> DeviceType:
         """Detect device type (Pi, PC, NUC, Server, Jetson, etc.)."""
+        if sys.platform == "darwin":
+            return DeviceType.MAC
+
         # Check for Raspberry Pi device tree
         model_path = "/proc/device-tree/model"
         if os.path.exists(model_path):
@@ -317,6 +340,8 @@ class PlatformDetector:
     @staticmethod
     def _detect_cpu_model() -> str:
         """Detect CPU model name."""
+        if sys.platform == "darwin":
+            return _sysctl("machdep.cpu.brand_string") or "Unknown"
         try:
             with open("/proc/cpuinfo") as f:
                 for line in f:
@@ -329,6 +354,9 @@ class PlatformDetector:
     @staticmethod
     def _detect_memory() -> int:
         """Detect total memory in MB."""
+        if sys.platform == "darwin":
+            memsize = _sysctl("hw.memsize")
+            return int(memsize) // (1024 * 1024) if memsize.isdigit() else 0
         try:
             with open("/proc/meminfo") as f:
                 for line in f:

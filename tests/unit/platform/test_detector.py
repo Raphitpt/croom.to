@@ -17,6 +17,12 @@ from croom.platform.detector import (
 )
 
 
+@pytest.fixture
+def linux_host(monkeypatch):
+    """Run Linux detection paths even when the tests run on macOS."""
+    monkeypatch.setattr("croom.platform.detector.sys.platform", "linux")
+
+
 class TestArchitecture:
     """Tests for Architecture enum."""
 
@@ -136,28 +142,28 @@ class TestPlatformDetector:
             arch = PlatformDetector._detect_architecture()
             assert arch == Architecture.ARM32
 
-    def test_detect_device_rpi5(self):
+    def test_detect_device_rpi5(self, linux_host):
         """Test detection of Raspberry Pi 5."""
         with patch("os.path.exists", return_value=True):
             with patch("builtins.open", mock_open(read_data=b"Raspberry Pi 5 Model B Rev 1.0")):
                 device = PlatformDetector._detect_device()
                 assert device == DeviceType.RASPBERRY_PI_5
 
-    def test_detect_device_rpi4(self):
+    def test_detect_device_rpi4(self, linux_host):
         """Test detection of Raspberry Pi 4."""
         with patch("os.path.exists", return_value=True):
             with patch("builtins.open", mock_open(read_data=b"Raspberry Pi 4 Model B Rev 1.4")):
                 device = PlatformDetector._detect_device()
                 assert device == DeviceType.RASPBERRY_PI_4
 
-    def test_detect_device_jetson(self):
+    def test_detect_device_jetson(self, linux_host):
         """Test detection of NVIDIA Jetson."""
         with patch("os.path.exists", return_value=True):
             with patch("builtins.open", mock_open(read_data=b"NVIDIA Jetson Xavier NX")):
                 device = PlatformDetector._detect_device()
                 assert device == DeviceType.JETSON
 
-    def test_detect_device_pc_no_model_file(self):
+    def test_detect_device_pc_no_model_file(self, linux_host):
         """Test detection falls back to PC detection when no model file."""
         with patch("os.path.exists", return_value=False):
             with patch("platform.machine", return_value="x86_64"):
@@ -165,7 +171,7 @@ class TestPlatformDetector:
                     device = PlatformDetector._detect_device()
                     assert device in [DeviceType.PC, DeviceType.NUC, DeviceType.SERVER, DeviceType.UNKNOWN]
 
-    def test_detect_os(self):
+    def test_detect_os(self, linux_host):
         """Test OS detection."""
         os_release_content = '''ID=ubuntu
 VERSION_ID="22.04"
@@ -177,6 +183,37 @@ VERSION_CODENAME=jammy
                 assert os_name == "ubuntu"
                 assert os_version == "22.04"
                 assert os_codename == "jammy"
+
+
+class TestPlatformDetectorMac:
+    """Tests for macOS detection."""
+
+    @pytest.fixture(autouse=True)
+    def mac_host(self, monkeypatch):
+        monkeypatch.setattr("croom.platform.detector.sys.platform", "darwin")
+
+    def test_detect_device_mac(self):
+        assert PlatformDetector._detect_device() == DeviceType.MAC
+
+    def test_detect_os_mac(self):
+        with patch("platform.mac_ver", return_value=("26.1", ("", "", ""), "arm64")):
+            assert PlatformDetector._detect_os() == ("macos", "26.1", "")
+
+    def test_detect_cpu_and_memory_mac(self):
+        def sysctl(args, **kwargs):
+            values = {"machdep.cpu.brand_string": "Apple M4", "hw.memsize": str(16 * 1024 ** 3)}
+            return MagicMock(returncode=0, stdout=values[args[2]] + "\n")
+
+        with patch("croom.platform.detector.subprocess.run", side_effect=sysctl):
+            assert PlatformDetector._detect_cpu_model() == "Apple M4"
+            assert PlatformDetector._detect_memory() == 16384
+
+    def test_mac_is_desktop_class(self):
+        info = PlatformInfo()
+        info.device = DeviceType.MAC
+        assert info.is_desktop_class
+        assert info.is_macos
+        assert not info.supports_hailo
 
 
 class TestPlatformDetectorGPU:

@@ -5,6 +5,7 @@ Defines platform-specific configurations and capabilities for different
 hardware targets (Raspberry Pi, x86_64 PCs, NUCs, etc.).
 """
 
+import copy
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -422,6 +423,51 @@ PROFILE_JETSON = HardwareProfile(
 )
 
 
+PROFILE_MAC = HardwareProfile(
+    name="Mac (Apple Silicon)",
+    device_type=DeviceType.MAC,
+    architecture=Architecture.ARM64,
+    performance_tier=PerformanceTier.MEDIUM,
+    display=DisplayProfile(
+        default_resolution=(1920, 1080),
+        supported_resolutions=[(3840, 2160), (2560, 1440), (1920, 1080), (1280, 720)],
+        hdmi_cec_supported=False,  # No CEC over USB-C/HDMI; use a USB-CEC adapter or the TV network API
+        ddc_ci_supported=False,
+        touch_supported=False,
+        brightness_control=False,
+    ),
+    ai=AIProfile(
+        preferred_backend="cpu",
+        fallback_backends=["cpu"],
+        max_inference_fps=30,
+        features_enabled=[
+            "person_detection",
+            "face_detection",
+            "occupancy_counting",
+            "noise_reduction",
+        ],
+    ),
+    audio=AudioProfile(
+        preferred_backend="coreaudio",
+        echo_cancellation=True,
+        noise_reduction=True,
+    ),
+    video=VideoProfile(
+        preferred_backend="avfoundation",
+        default_resolution=(1920, 1080),
+        default_fps=30,
+    ),
+    has_gpio=False,
+    has_i2c=False,
+    has_hdmi_cec=False,
+    has_hardware_encoder=True,  # VideoToolbox
+    recommended_ram_mb=8192,
+    recommended_storage_gb=64,
+    auto_start=True,
+    kiosk_mode=True,
+)
+
+
 # Profile registry
 PROFILES = {
     DeviceType.RASPBERRY_PI_5: PROFILE_RASPBERRY_PI_5,
@@ -429,6 +475,7 @@ PROFILES = {
     DeviceType.PC: PROFILE_X86_64_CPU_ONLY,  # Default, may be upgraded
     DeviceType.NUC: PROFILE_NUC,
     DeviceType.JETSON: PROFILE_JETSON,
+    DeviceType.MAC: PROFILE_MAC,
 }
 
 
@@ -455,8 +502,8 @@ def detect_profile() -> HardwareProfile:
                 profile = PROFILE_X86_64_INTEL
                 logger.info(f"Using Intel profile for {info.gpu.name}")
             elif info.gpu.vendor == GPUVendor.AMD:
-                # AMD uses CPU/OpenCL for now
-                profile = PROFILE_X86_64_CPU_ONLY
+                # AMD uses CPU/OpenCL for now (copy: don't grow the shared profile)
+                profile = copy.deepcopy(PROFILE_X86_64_CPU_ONLY)
                 profile.ai.features_enabled.extend([
                     "person_detection",
                     "face_detection",
