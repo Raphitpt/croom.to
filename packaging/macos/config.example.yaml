@@ -1,0 +1,38 @@
+# Croom on a Mac mini: Google Meet, Fire TV, Google Calendar auto-join.
+# Copied to ~/.config/croom/config.yaml by install.sh.
+
+room:
+  name: Conference Room
+  location: ""
+  timezone: Europe/Paris
+
+meeting:
+  platforms: [google_meet]
+  join_early_minutes: 1
+  auto_leave: true
+  camera_default_on: true
+  mic_default_on: true
+  browser_channel: chrome  # Installed Google Chrome; "" for Playwright's Chromium
+  fullscreen: true
+
+calendar:
+  providers: [google]
+  sync_interval_seconds: 60
+  # Service account key (Google Workspace, with domain-wide delegation)
+  # or OAuth token of the room account
+  google_credentials_path: ""
+  google_delegate_email: ""  # Room account impersonated by the service account
+  calendar_ids: []  # Empty: the account's primary calendar
+  auto_join: true
+
+display:
+  backend: firetv
+  firetv_host: ""  # TV IP address; reserve it in the router's DHCP
+  firetv_hdmi_input: ""  # See packaging/macos/README.md to find it
+  power_off_after_meeting: false
+
+ai:
+  enabled: false  # Camera and mic are handled by the meeting browser
+
+dashboard:
+  enabled: false
