@@ -67,6 +67,7 @@ dev = [
 [project.scripts]
 croom = "croom.core.agent:main"
 croom-ui = "croom_ui.main:main"
+croom-login = "croom.meeting.browser:login_main"
 
 [project.urls]
 Homepage = "https://github.com/your-org/croom"

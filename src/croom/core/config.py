@@ -36,6 +36,9 @@ class MeetingConfig:
     auto_leave: bool = True
     camera_default_on: bool = True
     mic_default_on: bool = True
+    browser_profile_dir: str = ""  # Empty: per-OS default (see croom.meeting.browser)
+    browser_channel: str = ""  # "chrome" to use installed Google Chrome
+    fullscreen: bool = True  # Kiosk mode on the room display
 
 
 @dataclass
@@ -207,6 +210,9 @@ class Config:
                 "auto_leave": self.meeting.auto_leave,
                 "camera_default_on": self.meeting.camera_default_on,
                 "mic_default_on": self.meeting.mic_default_on,
+                "browser_profile_dir": self.meeting.browser_profile_dir,
+                "browser_channel": self.meeting.browser_channel,
+                "fullscreen": self.meeting.fullscreen,
             },
             "calendar": {
                 "providers": self.calendar.providers,

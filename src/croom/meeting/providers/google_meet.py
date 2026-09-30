@@ -9,6 +9,7 @@ import logging
 import re
 from typing import Optional, Dict, Any
 
+from croom.meeting.browser import BrowserOptions, launch_room_browser
 from croom.meeting.providers.base import MeetingProvider, MeetingInfo, MeetingState
 
 logger = logging.getLogger(__name__)
@@ -35,10 +36,10 @@ class GoogleMeetProvider(MeetingProvider):
     )
     MEET_CODE_PATTERN = re.compile(r"^[a-z]{3}-[a-z]{4}-[a-z]{3}$", re.IGNORECASE)
 
-    def __init__(self):
+    def __init__(self, browser_options: Optional[BrowserOptions] = None):
         super().__init__()
+        self._browser_options = browser_options or BrowserOptions()
         self._playwright = None
-        self._browser: Optional["Browser"] = None
         self._context: Optional["BrowserContext"] = None
         self._page: Optional["Page"] = None
 
@@ -82,29 +83,11 @@ class GoogleMeetProvider(MeetingProvider):
 
         self._playwright = await async_playwright().start()
 
-        # Launch browser with required permissions
-        self._browser = await self._playwright.chromium.launch(
-            headless=False,  # Meet requires visible browser
-            args=[
-                "--use-fake-ui-for-media-stream",  # Auto-accept camera/mic
-                "--disable-infobars",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-accelerated-2d-canvas",
-                "--disable-gpu",
-                "--window-size=1920,1080",
-            ]
+        # Persistent profile: the room account stays signed in (see croom-login)
+        self._context = await launch_room_browser(self._playwright, self._browser_options)
+        self._page = (
+            self._context.pages[0] if self._context.pages else await self._context.new_page()
         )
-
-        # Create context with permissions
-        self._context = await self._browser.new_context(
-            permissions=["camera", "microphone"],
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-
-        self._page = await self._context.new_page()
 
         logger.info("Google Meet provider initialized")
 
@@ -120,10 +103,6 @@ class GoogleMeetProvider(MeetingProvider):
         if self._context:
             await self._context.close()
             self._context = None
-
-        if self._browser:
-            await self._browser.close()
-            self._browser = None
 
         if self._playwright:
             await self._playwright.stop()
@@ -161,8 +140,8 @@ class GoogleMeetProvider(MeetingProvider):
         logger.info(f"Joining Google Meet: {meeting_id}")
 
         try:
-            # Navigate to meeting
-            await self._page.goto(full_url, wait_until="networkidle")
+            # Navigate to meeting (Meet keeps polling, it never goes network-idle)
+            await self._page.goto(full_url, wait_until="domcontentloaded")
 
             # Wait for page to load
             await asyncio.sleep(2)
@@ -309,8 +288,8 @@ class GoogleMeetProvider(MeetingProvider):
             return False
 
         try:
-            # Keyboard shortcut: Ctrl+E
-            await self._page.keyboard.press("Control+e")
+            # Keyboard shortcut: Ctrl+E (Cmd+E on macOS)
+            await self._page.keyboard.press("ControlOrMeta+e")
             await asyncio.sleep(0.5)
 
             # Update state
@@ -329,8 +308,8 @@ class GoogleMeetProvider(MeetingProvider):
             return True
 
         try:
-            # Keyboard shortcut: Ctrl+D
-            await self._page.keyboard.press("Control+d")
+            # Keyboard shortcut: Ctrl+D (Cmd+D on macOS)
+            await self._page.keyboard.press("ControlOrMeta+d")
             await asyncio.sleep(0.5)
 
             # Update state

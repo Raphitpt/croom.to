@@ -6,11 +6,13 @@ meeting lifecycle.
 """
 
 import asyncio
+import inspect
 import logging
 from typing import Optional, Dict, Any, List, Callable
 
 from croom.core.config import Config
 from croom.core.service import Service
+from croom.meeting.browser import BrowserOptions
 from croom.meeting.providers.base import (
     MeetingProvider,
     MeetingInfo,
@@ -40,12 +42,22 @@ class MeetingService(Service):
 
     async def start(self) -> None:
         """Start meeting service."""
+        browser_options = BrowserOptions(
+            profile_dir=self.config.meeting.browser_profile_dir,
+            channel=self.config.meeting.browser_channel,
+            fullscreen=self.config.meeting.fullscreen,
+        )
+
         # Initialize configured providers
         for platform in self.config.meeting.platforms:
             provider_cls = get_provider(platform)
             if provider_cls:
                 try:
-                    provider = provider_cls()
+                    # Providers using the shared room browser take its options
+                    if "browser_options" in inspect.signature(provider_cls).parameters:
+                        provider = provider_cls(browser_options=browser_options)
+                    else:
+                        provider = provider_cls()
                     await provider.initialize()
                     self._providers[platform] = provider
                     logger.info(f"Initialized meeting provider: {platform}")
