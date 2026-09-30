@@ -6,7 +6,8 @@ Manages calendar providers and coordinates event polling.
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Optional, Dict, Any, List, Callable, Set
 
 from croom.calendar.providers.base import (
@@ -19,6 +20,15 @@ from croom.calendar.providers.microsoft import MicrosoftCalendarProvider
 from croom.core.service import Service
 
 logger = logging.getLogger(__name__)
+
+
+def _room_timezone(name: str) -> tzinfo:
+    """Time zone by IANA name, UTC if unknown."""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning(f"Unknown time zone '{name}', using UTC")
+        return timezone.utc
 
 
 class CalendarService(Service):
@@ -46,6 +56,7 @@ class CalendarService(Service):
                 - calendar_ids: List of calendar IDs to monitor
                 - poll_interval: How often to check for events (seconds)
                 - auto_join_minutes: Minutes before meeting to trigger auto-join
+                - timezone: Room time zone for "today" (default UTC)
         """
         super().__init__("calendar")
         self.config = config or {}
@@ -53,6 +64,7 @@ class CalendarService(Service):
         self._calendar_ids: List[str] = []
         self._poll_interval = self.config.get('poll_interval', 60)
         self._auto_join_minutes = self.config.get('auto_join_minutes', 1)
+        self._timezone = _room_timezone(self.config.get('timezone', 'UTC'))
 
         # Event cache
         self._events: Dict[str, CalendarEvent] = {}
@@ -309,7 +321,7 @@ class CalendarService(Service):
         Returns:
             List of today's calendar events
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(self._timezone)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
 

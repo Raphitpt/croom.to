@@ -4,6 +4,7 @@ Google Calendar provider.
 Uses Google Calendar API to fetch events and meeting information.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
@@ -110,11 +111,13 @@ class GoogleCalendarProvider(CalendarProvider):
                 logger.error("No valid credentials provided")
                 return False
 
-            # Build service
-            self._service = build('calendar', 'v3', credentials=self._creds)
+            # Build service (the Google client is blocking: keep it off the event loop)
+            self._service = await asyncio.to_thread(
+                build, 'calendar', 'v3', credentials=self._creds
+            )
 
             # Test authentication
-            self._service.calendarList().list(maxResults=1).execute()
+            await asyncio.to_thread(self._service.calendarList().list(maxResults=1).execute)
 
             self._authenticated = True
             self._credentials = credentials
@@ -133,7 +136,7 @@ class GoogleCalendarProvider(CalendarProvider):
 
         try:
             if self._creds.expired and self._creds.refresh_token:
-                self._creds.refresh(Request())
+                await asyncio.to_thread(self._creds.refresh, Request())
                 logger.info("Google Calendar tokens refreshed")
                 return True
             return True
@@ -147,7 +150,7 @@ class GoogleCalendarProvider(CalendarProvider):
             return []
 
         try:
-            result = self._service.calendarList().list().execute()
+            result = await asyncio.to_thread(self._service.calendarList().list().execute)
             calendars = result.get('items', [])
 
             return [
@@ -181,14 +184,15 @@ class GoogleCalendarProvider(CalendarProvider):
             if time_max.tzinfo is None:
                 time_max = time_max.replace(tzinfo=timezone.utc)
 
-            result = self._service.events().list(
+            request = self._service.events().list(
                 calendarId=calendar_id,
                 timeMin=time_min.isoformat(),
                 timeMax=time_max.isoformat(),
                 maxResults=max_results,
                 singleEvents=True,
                 orderBy='startTime'
-            ).execute()
+            )
+            result = await asyncio.to_thread(request.execute)
 
             events = []
             for item in result.get('items', []):

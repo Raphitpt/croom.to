@@ -79,6 +79,7 @@ def calendar_options(config: Config) -> Optional[Dict[str, Any]]:
         "calendar_ids": cal.calendar_ids,
         "poll_interval": cal.sync_interval_seconds,
         "auto_join_minutes": config.meeting.join_early_minutes,
+        "timezone": config.room.timezone,
     }
 
 
