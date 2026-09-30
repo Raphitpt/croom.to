@@ -80,7 +80,7 @@ where = ["src"]
 include = ["croom*"]
 
 [tool.setuptools.package-data]
-croom = ["py.typed"]
+croom = ["py.typed", "meeting/standby.html"]
 
 [tool.black]
 line-length = 100

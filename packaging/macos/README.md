@@ -45,6 +45,14 @@ Then:
    login. macOS disables it while FileVault is on; if your MDM enforces
    FileVault, someone has to log in after each restart.
 
+## Standby screen
+
+Between meetings the display shows the room name, the time and the next
+meetings of the room calendar, with a countdown to the next one. Set
+`room.language` (`fr` or `en`) and optionally `room.logo_path` (SVG or
+PNG, shown in white). If Chrome is closed or crashes, Croom relaunches it
+within 15 seconds.
+
 ## Calendar
 
 The room joins the meetings of its Google calendar that have a Meet link,

@@ -25,6 +25,8 @@ class RoomConfig:
     name: str = "Conference Room"
     location: str = ""
     timezone: str = "UTC"
+    language: str = "en"  # Standby screen language: 'en' or 'fr'
+    logo_path: str = ""  # Logo shown on the standby screen (SVG or PNG, displayed white)
 
 
 @dataclass
@@ -202,6 +204,8 @@ class Config:
                 "name": self.room.name,
                 "location": self.room.location,
                 "timezone": self.room.timezone,
+                "language": self.room.language,
+                "logo_path": self.room.logo_path,
             },
             "meeting": {
                 "platforms": self.meeting.platforms,

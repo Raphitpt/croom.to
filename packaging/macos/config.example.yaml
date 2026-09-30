@@ -5,6 +5,8 @@ room:
   name: Conference Room
   location: ""
   timezone: Europe/Paris
+  language: fr  # Standby screen: fr or en
+  logo_path: ""  # SVG/PNG logo on the standby screen, shown in white
 
 meeting:
   platforms: [google_meet]

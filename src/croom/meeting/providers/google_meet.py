@@ -48,6 +48,15 @@ class GoogleMeetProvider(MeetingProvider):
         return "google_meet"
 
     @property
+    def page(self):
+        return self._page
+
+    @property
+    def is_ready(self) -> bool:
+        # Quitting Chrome (Cmd+Q) or a crash closes the persistent context's pages
+        return self._page is not None and not self._page.is_closed()
+
+    @property
     def display_name(self) -> str:
         return "Google Meet"
 
@@ -96,13 +105,15 @@ class GoogleMeetProvider(MeetingProvider):
         if self._state == MeetingState.CONNECTED:
             await self.leave_meeting()
 
-        if self._page:
-            await self._page.close()
-            self._page = None
-
-        if self._context:
-            await self._context.close()
-            self._context = None
+        # The browser may already be gone (closed by hand or crashed)
+        for closable in (self._page, self._context):
+            if closable:
+                try:
+                    await closable.close()
+                except Exception as e:
+                    logger.debug(f"Ignoring close error: {e}")
+        self._page = None
+        self._context = None
 
         if self._playwright:
             await self._playwright.stop()

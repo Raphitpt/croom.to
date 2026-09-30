@@ -140,6 +140,9 @@ class TestMeetingServiceBrowserOptions:
         created = {}
 
         class FakeMeet:
+            page = None
+            is_ready = True
+
             def __init__(self, browser_options=None):
                 created["meet"] = browser_options
 
@@ -147,6 +150,9 @@ class TestMeetingServiceBrowserOptions:
                 pass
 
         class FakeZoom:
+            page = None
+            is_ready = True
+
             def __init__(self):
                 created["zoom"] = True
 

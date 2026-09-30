@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, List, Callable
 from croom.core.config import Config
 from croom.core.service import Service
 from croom.meeting.browser import BrowserOptions
+from croom.meeting.standby import StandbyScreen
 from croom.meeting.providers.base import (
     MeetingProvider,
     MeetingInfo,
@@ -39,6 +40,15 @@ class MeetingService(Service):
         self._providers: Dict[str, MeetingProvider] = {}
         self._active_provider: Optional[MeetingProvider] = None
         self._state_callbacks: List[Callable[[MeetingState], None]] = []
+
+        self.standby = StandbyScreen(
+            room_name=config.room.name,
+            location=config.room.location,
+            timezone_name=config.room.timezone,
+            language=config.room.language,
+            logo_path=config.room.logo_path,
+        )
+        self._watchdog_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         """Start meeting service."""
@@ -67,10 +77,17 @@ class MeetingService(Service):
         if not self._providers:
             logger.warning("No meeting providers available")
 
+        await self.show_standby()
+        self._watchdog_task = asyncio.create_task(self._browser_watchdog())
+
         logger.info(f"Meeting service started with {len(self._providers)} providers")
 
     async def stop(self) -> None:
         """Stop meeting service."""
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
+
         # Leave any active meeting
         if self._active_provider and self._active_provider.state == MeetingState.CONNECTED:
             await self.leave_meeting()
@@ -152,17 +169,27 @@ class MeetingService(Service):
         if self._active_provider and self._active_provider.state == MeetingState.CONNECTED:
             await self.leave_meeting()
 
+        # The browser may have been closed since the last meeting
+        if not provider.is_ready:
+            await self._restart_provider(provider)
+
         # Setup state callback
         provider.add_state_callback(self._on_state_change)
 
         # Join meeting
         self._active_provider = provider
-        meeting_info = await provider.join_meeting(
-            meeting_url,
-            display_name=display_name,
-            camera_on=camera_on,
-            mic_on=mic_on
-        )
+        try:
+            meeting_info = await provider.join_meeting(
+                meeting_url,
+                display_name=display_name,
+                camera_on=camera_on,
+                mic_on=mic_on
+            )
+        except Exception:
+            # Don't leave Meet's error page on the room display
+            self._active_provider = None
+            await self.show_standby()
+            raise
 
         return meeting_info
 
@@ -171,6 +198,56 @@ class MeetingService(Service):
         if self._active_provider:
             await self._active_provider.leave_meeting()
             self._active_provider = None
+        await self.show_standby()
+
+    def _display_page(self):
+        """Page of the provider whose browser is on the room display."""
+        for provider in self._providers.values():
+            if provider.page is not None and provider.is_ready:
+                return provider.page
+        return None
+
+    async def show_standby(self) -> None:
+        """Show the standby screen between meetings."""
+        page = self._display_page()
+        if page is None or self.is_in_meeting:
+            return
+        try:
+            await self.standby.show(page)
+        except Exception as e:
+            logger.warning(f"Cannot show standby screen: {e}")
+
+    async def update_standby(self, events, calendar_connected: bool = True) -> None:
+        """Refresh the meetings listed on the standby screen."""
+        self.standby.set_events(events, calendar_connected)
+        page = self._display_page()
+        if page is None or self.is_in_meeting:
+            return
+        try:
+            await self.standby.push(page)
+        except Exception as e:
+            logger.warning(f"Cannot update standby screen: {e}")
+
+    async def _restart_provider(self, provider: MeetingProvider) -> None:
+        logger.warning(f"{provider.display_name} browser is gone, relaunching it")
+        if provider is self._active_provider:
+            logger.warning("The meeting in progress was lost")
+            self._active_provider = None
+        await provider.shutdown()
+        await provider.initialize()
+
+    async def _browser_watchdog(self, interval: float = 15) -> None:
+        """Relaunch a browser that was closed by hand or crashed."""
+        while True:
+            await asyncio.sleep(interval)
+            for provider in list(self._providers.values()):
+                if provider.is_ready:
+                    continue
+                try:
+                    await self._restart_provider(provider)
+                    await self.show_standby()
+                except Exception as e:
+                    logger.error(f"Failed to relaunch {provider.display_name}: {e}")
 
     async def toggle_camera(self) -> bool:
         """

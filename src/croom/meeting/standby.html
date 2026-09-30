@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Croom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chivo+Mono:wght@400;500&family=Inter+Tight:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #090908;
+    --midnight: #061428;
+    --beige: #F6F5EF;
+    --muted: rgba(246, 245, 239, 0.56);
+    --line: rgba(246, 245, 239, 0.12);
+    --yellow: #F2B131;
+    --orange: #EC652B;
+    --sans: "Inter Tight", -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --mono: "Chivo Mono", "SF Mono", Menlo, monospace;
+    --cell: calc(100vw / 12);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    cursor: none;
+    background: var(--ink);
+    color: var(--beige);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Faint layout grid and a warm glow, after the Mink site */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, var(--line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+    background-size: var(--cell) var(--cell);
+    opacity: 0.45;
+  }
+  body::after {
+    content: "";
+    position: fixed;
+    right: -20vw;
+    bottom: -35vw;
+    width: 70vw;
+    height: 70vw;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(236, 101, 43, 0.22), rgba(242, 177, 49, 0.06) 45%, transparent 70%);
+  }
+
+  .screen {
+    position: relative;
+    z-index: 1;
+    height: 100vh;
+    padding: 4.2vw 5vw 3.4vw;
+    display: grid;
+    grid-template-columns: 7fr 5fr;
+    grid-template-rows: auto 1fr auto;
+    column-gap: 5vw;
+    transition: transform 4s ease-in-out;
+  }
+
+  .mono {
+    font-family: var(--mono);
+    font-size: 1.05vw;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .brand img {
+    height: 2.4vw;
+    filter: brightness(0) invert(0.96);  /* Logos are shown white on the dark screen */
+  }
+  .brand .wordmark { font-weight: 600; font-size: 1.6vw; }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 0.8vw;
+    padding: 0.7vw 1.3vw;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(9, 9, 8, 0.6);
+  }
+  .status .dot {
+    width: 0.75vw;
+    height: 0.75vw;
+    border-radius: 50%;
+    background: var(--yellow);
+    box-shadow: 0 0 1.2vw var(--yellow);
+  }
+  .status.busy .dot { background: var(--orange); box-shadow: 0 0 1.2vw var(--orange); }
+
+  .now {
+    align-self: center;
+  }
+  .now .label { color: var(--muted); margin-bottom: 1.6vw; }
+  .room {
+    font-size: 4.6vw;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .clock {
+    margin-top: 2.2vw;
+    font-size: 15vw;
+    font-weight: 300;
+    line-height: 0.85;
+    letter-spacing: -0.045em;
+    font-variant-numeric: tabular-nums;
+  }
+  .date { margin-top: 2.4vw; color: var(--muted); font-size: 1.35vw; }
+
+  .agenda {
+    align-self: center;
+    border-left: 1px solid var(--line);
+    padding-left: 3.4vw;
+  }
+  .agenda .label { display: flex; align-items: center; gap: 0.8vw; margin-bottom: 1.4vw; }
+  .agenda .label::before {
+    content: "";
+    width: 0.6vw;
+    height: 0.6vw;
+    background: var(--yellow);
+  }
+
+  .meetings { list-style: none; }
+  .meeting {
+    padding: 1.6vw 0;
+    border-top: 1px solid var(--line);
+  }
+  .meeting:last-child { border-bottom: 1px solid var(--line); }
+  .meeting .when { color: var(--muted); display: flex; gap: 1vw; }
+  .meeting .when .day { color: var(--beige); }
+  .meeting .title {
+    margin-top: 0.7vw;
+    font-size: 2.1vw;
+    font-weight: 500;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .meeting.later .title { font-size: 1.6vw; color: rgba(246, 245, 239, 0.8); }
+  .chip {
+    display: inline-block;
+    margin-top: 1vw;
+    padding: 0.45vw 0.9vw;
+    background: var(--yellow);
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .meeting.current .chip { background: var(--orange); }
+
+  .empty { padding: 1.6vw 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 1.8vw; font-weight: 300; }
+
+  footer {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<main class="screen" id="screen">
+  <header>
+    <div class="brand" id="brand"></div>
+    <div class="status mono" id="status"><span class="dot"></span><span id="status-text"></span></div>
+  </header>
+
+  <section class="now">
+    <p class="label mono" id="location"></p>
+    <h1 class="room" id="room"></h1>
+    <div class="clock" id="clock"></div>
+    <p class="date mono" id="date"></p>
+  </section>
+
+  <aside class="agenda">
+    <p class="label mono" id="agenda-title"></p>
+    <ol class="meetings" id="meetings"></ol>
+  </aside>
+
+  <footer class="mono">
+    <span id="footer"></span>
+    <span>Croom</span>
+  </footer>
+</main>
+
+<script>
+(() => {
+  // Filled in by croom.meeting.standby
+  const CONFIG = /*CROOM_CONFIG*/{};
+
+  const STRINGS = {
+    en: {
+      available: "Available", busy: "In a meeting", upcoming: "Upcoming meetings",
+      nothing: "No upcoming meetings", noCalendar: "No calendar connected",
+      footer: "Meetings start automatically", now: "Now", today: "Today", tomorrow: "Tomorrow",
+      inMin: n => `in ${n} min`, inHours: (h, m) => m ? `in ${h} h ${m}` : `in ${h} h`,
+    },
+    fr: {
+      available: "Disponible", busy: "Réunion en cours", upcoming: "Prochaines réunions",
+      nothing: "Aucune réunion à venir", noCalendar: "Aucun agenda connecté",
+      footer: "Les réunions démarrent automatiquement", now: "En cours", today: "Aujourd'hui",
+      tomorrow: "Demain",
+      inMin: n => `dans ${n} min`, inHours: (h, m) => m ? `dans ${h} h ${m}` : `dans ${h} h`,
+    },
+  };
+  const T = STRINGS[CONFIG.language] || STRINGS.en;
+  const LOCALE = CONFIG.language === "fr" ? "fr-FR" : "en-GB";
+  const TZ = CONFIG.timezone || undefined;
+  const MAX_MEETINGS = 4;
+
+  let data = { meetings: [], calendar: false };
+
+  const $ = id => document.getElementById(id);
+  const fmt = options => new Intl.DateTimeFormat(LOCALE, { timeZone: TZ, ...options });
+  const timeFmt = fmt({ hour: "2-digit", minute: "2-digit" });
+  const dateFmt = fmt({ weekday: "long", day: "numeric", month: "long" });
+  const dayKey = fmt({ year: "numeric", month: "2-digit", day: "2-digit" });
+  const weekdayFmt = fmt({ weekday: "long" });
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    // textContent only: meeting titles come from outside invitations
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function dayLabel(date, now) {
+    const tomorrow = new Date(now.getTime() + 86400000);
+    if (dayKey.format(date) === dayKey.format(now)) return T.today;
+    if (dayKey.format(date) === dayKey.format(tomorrow)) return T.tomorrow;
+    return weekdayFmt.format(date);
+  }
+
+  function relative(start, now) {
+    const minutes = Math.max(1, Math.round((start - now) / 60000));
+    if (minutes < 60) return T.inMin(minutes);
+    if (minutes < 12 * 60) return T.inHours(Math.floor(minutes / 60), minutes % 60);
+    return null;
+  }
+
+  function renderStatic() {
+    const brand = $("brand");
+    brand.replaceChildren();
+    if (CONFIG.logo) {
+      const img = el("img");
+      img.src = CONFIG.logo;
+      img.alt = "";
+      brand.append(img);
+    } else {
+      brand.append(el("span", "wordmark", CONFIG.room || "Croom"));
+    }
+    $("room").textContent = CONFIG.room || "";
+    $("location").textContent = CONFIG.location || "";
+    $("agenda-title").textContent = T.upcoming;
+    $("footer").textContent = T.footer;
+  }
+
+  function render() {
+    const now = new Date();
+    $("clock").textContent = timeFmt.format(now);
+    $("date").textContent = dateFmt.format(now);
+
+    const meetings = data.meetings
+      .map(m => ({ ...m, start: new Date(m.start), end: new Date(m.end) }))
+      .filter(m => m.end > now)
+      .sort((a, b) => a.start - b.start);
+
+    const busy = meetings.some(m => m.start <= now);
+    $("status").classList.toggle("busy", busy);
+    $("status-text").textContent = busy ? T.busy : T.available;
+
+    const list = $("meetings");
+    list.replaceChildren();
+    if (!meetings.length) {
+      list.append(el("li", "empty", data.calendar ? T.nothing : T.noCalendar));
+      return;
+    }
+
+    meetings.slice(0, MAX_MEETINGS).forEach((m, index) => {
+      const current = m.start <= now;
+      const item = el("li", "meeting" + (current ? " current" : index ? " later" : " next"));
+      const when = el("div", "when mono");
+      when.append(
+        el("span", "day", dayLabel(m.start, now)),
+        el("span", "", `${timeFmt.format(m.start)} — ${timeFmt.format(m.end)}`),
+      );
+      item.append(when, el("div", "title", m.title));
+
+      const chip = current ? T.now : index === 0 ? relative(m.start, now) : null;
+      if (chip) item.append(el("span", "chip mono", chip));
+      list.append(item);
+    });
+  }
+
+  // Shift the layout a few pixels now and then so a static screen does not mark the TV
+  function drift() {
+    const dx = Math.round(Math.random() * 16 - 8);
+    const dy = Math.round(Math.random() * 12 - 6);
+    $("screen").style.transform = `translate(${dx}px, ${dy}px)`;
+  }
+
+  window.croomStandby = {
+    update(next) {
+      data = next;
+      render();
+    },
+  };
+
+  renderStatic();
+  render();
+  setInterval(render, 5000);
+  setInterval(drift, 60000);
+})();
+</script>
+</body>
+</html>

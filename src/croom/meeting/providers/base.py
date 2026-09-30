@@ -92,6 +92,16 @@ class MeetingProvider(ABC):
         """Get current meeting info."""
         return self._current_meeting
 
+    @property
+    def page(self):
+        """Browser page shown on the room display, None if the provider has none."""
+        return None
+
+    @property
+    def is_ready(self) -> bool:
+        """False when the provider needs a restart (e.g. its browser was closed)."""
+        return True
+
     def add_state_callback(self, callback: Callable[[MeetingState], None]) -> None:
         """Add callback for state changes."""
         self._state_callbacks.append(callback)

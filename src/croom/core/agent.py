@@ -136,10 +136,12 @@ class CroomAgent:
         calendar_options = service_options.calendar_options(self.config)
         if calendar_options is None:
             logger.info("Calendar not configured, auto-join disabled")
+            meeting_service.standby.set_events([], calendar_connected=False)
         else:
             try:
                 from croom.calendar.service import CalendarService
                 calendar_service = CalendarService(calendar_options)
+                calendar_service.on_events_updated(self._on_calendar_events)
                 if self.config.calendar.auto_join:
                     calendar_service.on_meeting_starting(self._on_calendar_meeting)
                 self.service_manager.register(calendar_service, required=False)
@@ -161,7 +163,16 @@ class CroomAgent:
 
     def _on_calendar_meeting(self, event) -> None:
         """Calendar callback: a meeting with a video link is starting."""
-        task = asyncio.create_task(self._join_calendar_meeting(event))
+        self._spawn(self._join_calendar_meeting(event))
+
+    def _on_calendar_events(self, events) -> None:
+        """Calendar callback: events were fetched, refresh the standby screen."""
+        meeting = self.service_manager.get_service("meeting")
+        if meeting is not None:
+            self._spawn(meeting.update_standby(events))
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
         self._meeting_tasks.add(task)
         task.add_done_callback(self._meeting_tasks.discard)
 
